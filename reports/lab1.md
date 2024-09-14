@@ -19,8 +19,8 @@
 版本: `RustSBI version 0.3.0-alpha.2, adapting to RISC-V SBI v1.0.0`
 
 2. 如下
-- `a0` 为需恢复的`TrapContext`,是当前程序出现异常或运行结束需进行下一个程序初始化的上下文。
-- `sstatus`中SPP 等字段给出 Trap 发生之前 CPU 处在哪个特权级（S/U）等信息，`sepc`记录 Trap 发生之前执行的最后一条指令的地址, `scause`描述 Trap 的原因。`__restore`需恢复这些寄存器以便`sret`返回到正确的特权级以及指令地址。特殊处理以防嵌套的`Trap`覆盖掉当前信息。
+- `a0`指向上一个TaskContext, 与`__restore`无关。`__restore`可以恢复当前程序陷入Trap或运行结束需进行下一个程序初始化的Trap上下文；在本章中，也可为任务切换时需恢复的Trap上下文
+- `sstatus`中SPP 等字段给出 Trap 发生之前 CPU 处在哪个特权级（S/U）等信息，`sepc`记录 Trap 发生之前执行的最后一条指令的地址, `scause`描述 Trap 的原因。`__restore`需恢复这些寄存器以便`sret`返回到正确的特权级以及指令地址。这里的特殊处理是为了防止嵌套的`Trap`覆盖掉当前信息。
 - `x2` 为 `sp`, 会在`trap_handler`调用后恢复， [关于x4](https://riscv-rtthread-programming-manual.readthedocs.io/zh-cn/latest/zh_CN/3.html),它指向线程特定变量，暂时用不到。
 - `sp`恢复为用户栈, `sscratch`指向内核栈。
 - `sret`

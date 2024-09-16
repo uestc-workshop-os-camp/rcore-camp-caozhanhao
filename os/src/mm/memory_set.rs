@@ -63,6 +63,56 @@ impl MemorySet {
             None,
         );
     }
+
+    /// Make sure that there are no conflicts.
+    pub fn try_insert_framed_area(
+        &mut self,
+        start_va: VirtAddr,
+        end_va: VirtAddr,
+        permission: MapPermission,
+    ) -> isize
+    {
+        let rng = VPNRange::new(start_va.floor(), end_va.ceil());
+        for area in &self.areas
+        {
+            if area.vpn_range.overlap(&rng)
+            { return -1; }
+        }
+        self.insert_framed_area(start_va, end_va, permission);
+        0
+    }
+
+    /// Assume that all the VirtPage has been mapped.
+    pub fn remove_area(&mut self,
+                       start_va: VirtAddr,
+                       end_va: VirtAddr)
+    {
+        let rng = VPNRange::new(start_va.floor(), end_va.ceil());
+        for vpn in rng
+        {
+            self.page_table.unmap(vpn);
+        }
+        self.areas.retain(|x|
+            x.vpn_range.get_start() > rng.get_end() || x.vpn_range.get_end() < rng.get_start());
+    }
+
+    /// Make sure that all the VirtPage has been mapped.
+    pub fn try_remove_area(&mut self,
+                           start_va: VirtAddr,
+                           end_va: VirtAddr) -> isize
+    {
+        for vpn in VPNRange::new(start_va.floor(), end_va.ceil())
+        {
+            match self.translate(vpn)
+            {
+                Some(pte) if pte.is_valid() => {}
+                _ => { return -1; }
+            }
+        }
+        self.remove_area(start_va, end_va);
+        0
+    }
+
     fn push(&mut self, mut map_area: MapArea, data: Option<&[u8]>) {
         map_area.map(&mut self.page_table);
         if let Some(data) = data {

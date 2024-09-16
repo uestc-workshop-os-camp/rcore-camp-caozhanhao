@@ -1,6 +1,6 @@
 //! Types related to task management
 use super::TaskContext;
-use crate::config::TRAP_CONTEXT_BASE;
+use crate::config::{TRAP_CONTEXT_BASE, MAX_SYSCALL_NUM};
 use crate::mm::{
     kernel_stack_position, MapPermission, MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE,
 };
@@ -11,8 +11,11 @@ pub struct TaskControlBlock {
     /// Save task context
     pub task_cx: TaskContext,
 
-    /// Maintain the execution status of the current process
-    pub task_status: TaskStatus,
+    /// The task information
+    pub task_info: TaskInfo,
+
+    /// First dispatched time, to calculate the time in the TaskInfo.
+    pub first_dispatched_time: usize,
 
     /// Application address space
     pub memory_set: MemorySet,
@@ -47,7 +50,6 @@ impl TaskControlBlock {
             .translate(VirtAddr::from(TRAP_CONTEXT_BASE).into())
             .unwrap()
             .ppn();
-        let task_status = TaskStatus::Ready;
         // map a kernel-stack in kernel space
         let (kernel_stack_bottom, kernel_stack_top) = kernel_stack_position(app_id);
         KERNEL_SPACE.exclusive_access().insert_framed_area(
@@ -56,7 +58,8 @@ impl TaskControlBlock {
             MapPermission::R | MapPermission::W,
         );
         let task_control_block = Self {
-            task_status,
+            task_info: TaskInfo::new(TaskStatus::Ready),
+            first_dispatched_time: 0,
             task_cx: TaskContext::goto_trap_return(kernel_stack_top),
             memory_set,
             trap_cx_ppn,
@@ -98,7 +101,29 @@ impl TaskControlBlock {
     }
 }
 
-#[derive(Copy, Clone, PartialEq)]
+
+#[derive(Copy, Clone, Debug)]
+/// Task's information
+pub struct TaskInfo {
+    /// Task status in it's life cycle
+    pub status: TaskStatus,
+    /// The numbers of syscall called by task
+    pub syscall_times: [u32; MAX_SYSCALL_NUM],
+    /// Total running time of task
+    pub time: usize,
+}
+
+impl TaskInfo
+{
+    pub(crate) fn new(s: TaskStatus) -> Self {
+        TaskInfo{
+            status: s,
+            syscall_times: [0_u32; MAX_SYSCALL_NUM],
+            time: 0_usize,}
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Debug)]
 /// task status: UnInit, Ready, Running, Exited
 pub enum TaskStatus {
     /// uninitialized

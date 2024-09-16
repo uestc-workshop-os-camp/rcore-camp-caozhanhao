@@ -14,13 +14,15 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
-use crate::loader::{get_app_data, get_num_app};
+use crate::loader::{get_num_app, get_app_data};
 use crate::sync::UPSafeCell;
+use crate::timer::get_time_ms;
 use crate::trap::TrapContext;
 use alloc::vec::Vec;
 use lazy_static::*;
 use switch::__switch;
-pub use task::{TaskControlBlock, TaskStatus};
+
+pub use task::{TaskControlBlock, TaskInfo, TaskStatus};
 
 pub use context::TaskContext;
 
@@ -78,7 +80,7 @@ impl TaskManager {
     fn run_first_task(&self) -> ! {
         let mut inner = self.inner.exclusive_access();
         let next_task = &mut inner.tasks[0];
-        next_task.task_status = TaskStatus::Running;
+        next_task.task_info.status = TaskStatus::Running;
         let next_task_cx_ptr = &next_task.task_cx as *const TaskContext;
         drop(inner);
         let mut _unused = TaskContext::zero_init();
@@ -93,14 +95,14 @@ impl TaskManager {
     fn mark_current_suspended(&self) {
         let mut inner = self.inner.exclusive_access();
         let cur = inner.current_task;
-        inner.tasks[cur].task_status = TaskStatus::Ready;
+        inner.tasks[cur].task_info.status = TaskStatus::Ready;
     }
 
     /// Change the status of current `Running` task into `Exited`.
     fn mark_current_exited(&self) {
         let mut inner = self.inner.exclusive_access();
         let cur = inner.current_task;
-        inner.tasks[cur].task_status = TaskStatus::Exited;
+        inner.tasks[cur].task_info.status = TaskStatus::Exited;
     }
 
     /// Find next task to run and return task id.
@@ -111,7 +113,7 @@ impl TaskManager {
         let current = inner.current_task;
         (current + 1..current + self.num_app + 1)
             .map(|id| id % self.num_app)
-            .find(|id| inner.tasks[*id].task_status == TaskStatus::Ready)
+            .find(|id| inner.tasks[*id].task_info.status == TaskStatus::Ready)
     }
 
     /// Get the current 'Running' task's token.
@@ -139,7 +141,9 @@ impl TaskManager {
         if let Some(next) = self.find_next_task() {
             let mut inner = self.inner.exclusive_access();
             let current = inner.current_task;
-            inner.tasks[next].task_status = TaskStatus::Running;
+            inner.tasks[next].task_info.status = TaskStatus::Running;
+            let fdt = &mut inner.tasks[next].first_dispatched_time;
+            if *fdt == 0 { *fdt = get_time_ms(); }
             inner.current_task = next;
             let current_task_cx_ptr = &mut inner.tasks[current].task_cx as *mut TaskContext;
             let next_task_cx_ptr = &inner.tasks[next].task_cx as *const TaskContext;
@@ -153,6 +157,34 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
+    fn get_current_tcblk(&self) -> &'static mut TaskControlBlock
+    {
+        let mut mgr = self.inner.exclusive_access();
+        let curr = mgr.current_task;
+        let ptr = &mut mgr.tasks[curr] as *mut TaskControlBlock;
+        unsafe{ptr.as_mut()}.unwrap()
+    }
+
+    fn log_syscall(&self, call_id: usize)
+    {
+        let task = self.inner.shared_access().current_task;
+        let curr = &mut self.inner.exclusive_access().tasks[task];
+        curr.task_info.syscall_times[call_id] += 1;
+        curr.task_info.time = get_time_ms() - curr.first_dispatched_time;
+    }
+}
+
+/// Returns the current task's TaskControlBlock
+pub fn get_current_tcblk() -> &'static mut TaskControlBlock
+{
+    TASK_MANAGER.get_current_tcblk()
+}
+
+/// log the syscall for TaskInfo's syscall_times and last syscall time.
+pub fn log_syscall(call_id: usize)
+{
+    TASK_MANAGER.log_syscall(call_id);
 }
 
 /// Run the first task in task list.

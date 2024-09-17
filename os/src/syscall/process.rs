@@ -1,32 +1,21 @@
 //! Process management syscalls
-use alloc::sync::Arc;
-
 use crate::{
-    config::MAX_SYSCALL_NUM,
     loader::get_app_data_by_name,
-    mm::{translated_refmut, translated_str},
-    task::{
-        add_task, current_task, current_user_token, exit_current_and_run_next,
-        suspend_current_and_run_next, TaskStatus,
-    },
+    mm::{translated_byte_buffer, translated_refmut, translated_str, MapPermission},
+    task::*,
+    timer::get_time_us,
 };
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::mem::size_of;
+use core::slice::from_raw_parts;
+
 
 #[repr(C)]
 #[derive(Debug)]
 pub struct TimeVal {
     pub sec: usize,
     pub usec: usize,
-}
-
-/// Task information
-#[allow(dead_code)]
-pub struct TaskInfo {
-    /// Task status in it's life cycle
-    status: TaskStatus,
-    /// The numbers of syscall called by task
-    syscall_times: [u32; MAX_SYSCALL_NUM],
-    /// Total running time of task
-    time: usize,
 }
 
 /// task exits and submit an exit code
@@ -114,44 +103,98 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
     // ---- release current PCB automatically
 }
 
+fn copy_to_buffers(src: &[u8], dest: Vec<&mut [u8]>) {
+    let mut beg = 0_usize;
+    for buf in dest {
+        if buf.len() < src.len() - beg
+        {
+            buf.copy_from_slice(&src[beg..beg + buf.len()]);
+            beg += buf.len();
+        } else {
+            buf[..src.len() - beg].copy_from_slice(&src[beg..]);
+            break;
+        }
+    }
+}
+
+unsafe fn copy_to_app<T>(item: &T, dest: *mut T)
+{
+    let raw = from_raw_parts(item as *const _ as *const u8, size_of::<T>());
+    let buffers = translated_byte_buffer(current_user_token(),
+                                         dest as *const u8, size_of::<T>());
+    copy_to_buffers(raw, buffers);
+}
+
+// unsafe fn copy_to_app<T>(item: &T, dest: *mut T)
+// where
+//     [(); size_of::<T>()]:,
+// {
+//     let raw: [u8; size_of::<T>()] = transmute_copy(item);
+//
+//     // Comment the next line will lead to infinite loop, WHY?
+//     trace!("{:?}", raw);
+//
+//     let buffers = translated_byte_buffer(current_user_token(),
+//                                          dest as *const u8, size_of::<T>());
+//     copy_to_buffers(&raw, buffers);
+// }
+
 /// YOUR JOB: get time with second and microsecond
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
 pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    trace!("kernel: sys_get_time");
+    let us = get_time_us();
+    let time = TimeVal { sec: us / 1_000_000, usec: us % 1_000_000 };
+    unsafe { copy_to_app(&time, _ts); }
+    0
 }
 
 /// YOUR JOB: Finish sys_task_info to pass testcases
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TaskInfo`] is splitted by two pages ?
 pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_task_info NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    trace!("kernel: sys_task_info");
+    let info = current_task().unwrap().inner_shared_access().task_info;
+    unsafe { copy_to_app(&info, _ti); }
+    0
 }
 
-/// YOUR JOB: Implement mmap.
+// YOUR JOB: Implement mmap.
 pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_mmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    trace!("kernel: sys_mmap");
+    if _start % 4096 != 0 {
+        return -1;
+    } else if _len == 0 {
+        return 0;
+    } else if _port | 0b111 != 0b111 || _port & 0b111 == 0 {
+        return -1;
+    }
+    let mut perm = MapPermission::U;
+    if _port & 0b001 != 0 {
+        perm |= MapPermission::R;
+    }
+    if _port & 0b010 != 0 {
+        perm |= MapPermission::W;
+    }
+    if _port & 0b100 != 0 {
+        perm |= MapPermission::X;
+    }
+
+    current_task().unwrap().inner_exclusive_access().memory_set
+        .try_insert_framed_area(_start.into(), (_start + _len).into(), perm)
 }
 
-/// YOUR JOB: Implement munmap.
+// YOUR JOB: Implement munmap.
 pub fn sys_munmap(_start: usize, _len: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_munmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    trace!("kernel: sys_munmap");
+    if _start % 4096 != 0 {
+        return -1;
+    } else if _len == 0 {
+        return 0;
+    }
+    current_task().unwrap().inner_exclusive_access().memory_set
+        .try_remove_area(_start.into(), (_start + _len).into())
 }
 
 /// change data segment size
@@ -168,10 +211,20 @@ pub fn sys_sbrk(size: i32) -> isize {
 /// HINT: fork + exec =/= spawn
 pub fn sys_spawn(_path: *const u8) -> isize {
     trace!(
-        "kernel:pid[{}] sys_spawn NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_spawn",
         current_task().unwrap().pid.0
     );
-    -1
+    let token = current_user_token();
+    let path = translated_str(token, _path);
+    if let Some(data) = get_app_data_by_name(path.as_str()) {
+        let curr = current_task().unwrap();
+        let new_task = curr.spawn(data);
+        let new_pid = new_task.pid.0;
+        add_task(new_task);
+        new_pid as isize
+    } else {
+        -1
+    }
 }
 
 // YOUR JOB: Set task priority.
@@ -180,5 +233,7 @@ pub fn sys_set_priority(_prio: isize) -> isize {
         "kernel:pid[{}] sys_set_priority NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    if _prio < 2 { return -1; }
+    current_task().unwrap().inner_exclusive_access().priority = _prio as usize;
+    _prio
 }

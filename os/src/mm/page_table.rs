@@ -3,6 +3,8 @@ use super::{frame_alloc, FrameTracker, PhysAddr, PhysPageNum, StepByOne, VirtAdd
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
+use core::mem::size_of;
+use core::slice::from_raw_parts;
 use bitflags::*;
 
 bitflags! {
@@ -180,6 +182,44 @@ pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&
     }
     v
 }
+
+/// Copy from src to dest
+pub fn copy_to_buffers(src: &[u8], dest: Vec<&mut [u8]>) {
+    let mut beg = 0_usize;
+    for buf in dest {
+        if buf.len() < src.len() - beg
+        {
+            buf.copy_from_slice(&src[beg..beg + buf.len()]);
+            beg += buf.len();
+        } else {
+            buf[..src.len() - beg].copy_from_slice(&src[beg..]);
+            break;
+        }
+    }
+}
+
+/// Copy to the application address space
+pub unsafe fn copy_to_app<T>(token: usize, item: &T, dest: *mut T)
+{
+    let raw = from_raw_parts(item as *const _ as *const u8, size_of::<T>());
+    let buffers = translated_byte_buffer(token, dest as *const u8, size_of::<T>());
+    copy_to_buffers(raw, buffers);
+}
+
+// TODO: FAILED, WHY?
+// unsafe fn copy_to_app<T>(item: &T, dest: *mut T)
+// where
+//     [(); size_of::<T>()]:,
+// {
+//     let raw: [u8; size_of::<T>()] = transmute_copy(item);
+//
+//     // Comment the next line will lead to infinite loop, WHY?
+//     trace!("{:?}", raw);
+//
+//     let buffers = translated_byte_buffer(current_user_token(),
+//                                          dest as *const u8, size_of::<T>());
+//     copy_to_buffers(&raw, buffers);
+// }
 
 /// Translate&Copy a ptr[u8] array end with `\0` to a `String` Vec through page table
 pub fn translated_str(token: usize, ptr: *const u8) -> String {

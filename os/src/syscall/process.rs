@@ -1,33 +1,22 @@
 //! Process management syscalls
 //!
-use alloc::sync::Arc;
-
 use crate::{
-    config::MAX_SYSCALL_NUM,
+    mm::{translated_refmut, translated_str, MapPermission, copy_to_app},
+    task::*,
+    timer::get_time_us,
     fs::{open_file, OpenFlags},
-    mm::{translated_refmut, translated_str},
     task::{
         add_task, current_task, current_user_token, exit_current_and_run_next,
-        suspend_current_and_run_next, TaskStatus,
+        suspend_current_and_run_next,
     },
 };
+use alloc::sync::Arc;
 
 #[repr(C)]
 #[derive(Debug)]
 pub struct TimeVal {
     pub sec: usize,
     pub usec: usize,
-}
-
-/// Task information
-#[allow(dead_code)]
-pub struct TaskInfo {
-    /// Task status in it's life cycle
-    status: TaskStatus,
-    /// The numbers of syscall called by task
-    syscall_times: [u32; MAX_SYSCALL_NUM],
-    /// Total running time of task
-    time: usize,
 }
 
 pub fn sys_exit(exit_code: i32) -> ! {
@@ -118,40 +107,58 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
 pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    trace!("kernel: sys_get_time");
+    let us = get_time_us();
+    let time = TimeVal { sec: us / 1_000_000, usec: us % 1_000_000 };
+    unsafe { copy_to_app(current_user_token(), &time, _ts); }
+    0
 }
 
 /// YOUR JOB: Finish sys_task_info to pass testcases
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TaskInfo`] is splitted by two pages ?
 pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_task_info NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    trace!("kernel: sys_task_info");
+    let info = current_task().unwrap().inner_shared_access().task_info;
+    unsafe { copy_to_app(current_user_token(), &info, _ti); }
+    0
 }
 
-/// YOUR JOB: Implement mmap.
+// YOUR JOB: Implement mmap.
 pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_mmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    trace!("kernel: sys_mmap");
+    if _start % 4096 != 0 {
+        return -1;
+    } else if _len == 0 {
+        return 0;
+    } else if _port | 0b111 != 0b111 || _port & 0b111 == 0 {
+        return -1;
+    }
+    let mut perm = MapPermission::U;
+    if _port & 0b001 != 0 {
+        perm |= MapPermission::R;
+    }
+    if _port & 0b010 != 0 {
+        perm |= MapPermission::W;
+    }
+    if _port & 0b100 != 0 {
+        perm |= MapPermission::X;
+    }
+
+    current_task().unwrap().inner_exclusive_access().memory_set
+        .try_insert_framed_area(_start.into(), (_start + _len).into(), perm)
 }
 
-/// YOUR JOB: Implement munmap.
+// YOUR JOB: Implement munmap.
 pub fn sys_munmap(_start: usize, _len: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_munmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    trace!("kernel: sys_munmap");
+    if _start % 4096 != 0 {
+        return -1;
+    } else if _len == 0 {
+        return 0;
+    }
+    current_task().unwrap().inner_exclusive_access().memory_set
+        .try_remove_area(_start.into(), (_start + _len).into())
 }
 
 /// change data segment size
@@ -168,17 +175,32 @@ pub fn sys_sbrk(size: i32) -> isize {
 /// HINT: fork + exec =/= spawn
 pub fn sys_spawn(_path: *const u8) -> isize {
     trace!(
-        "kernel:pid[{}] sys_spawn NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_spawn",
         current_task().unwrap().pid.0
     );
-    -1
+
+    let token = current_user_token();
+    let path = translated_str(token, _path);
+
+    if let Some(app_inode) = open_file(path.as_str(), OpenFlags::RDONLY) {
+        let all_data = app_inode.read_all();
+        let curr = current_task().unwrap();
+        let new_task = curr.spawn(all_data.as_slice());
+        let new_pid = new_task.pid.0;
+        add_task(new_task);
+        new_pid as isize
+    } else {
+        -1
+    }
 }
 
 // YOUR JOB: Set task priority.
 pub fn sys_set_priority(_prio: isize) -> isize {
     trace!(
-        "kernel:pid[{}] sys_set_priority NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_set_priority",
         current_task().unwrap().pid.0
     );
-    -1
+    if _prio < 2 { return -1; }
+    current_task().unwrap().inner_exclusive_access().priority = _prio as usize;
+    _prio
 }

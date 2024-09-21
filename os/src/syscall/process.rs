@@ -2,12 +2,11 @@
 //!
 use crate::{
     mm::{translated_refmut, translated_str, MapPermission, copy_to_app},
-    task::*,
     timer::get_time_us,
     fs::{open_file, OpenFlags},
     task::{
         add_task, current_task, current_user_token, exit_current_and_run_next,
-        suspend_current_and_run_next,
+        suspend_current_and_run_next, TaskInfo
     },
 };
 use alloc::sync::Arc;

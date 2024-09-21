@@ -133,9 +133,9 @@ pub fn link_at(old_name: &str, new_name: &str) -> isize
     if ROOT_INODE.create_link_id(new_name, id.unwrap()).is_some()
     { 0 } else { -1 }
 
-    // TODO: FAILED, WHY
-    //if ROOT_INODE.create_link(new_name, old_name).is_some()
-    //{ 0 } else { -1 }
+    // // TODO: FAILED, WHY
+    // if ROOT_INODE.create_link(new_name, old_name).is_some()
+    // { 0 } else { -1 }
 }
 
 /// Unlink a file

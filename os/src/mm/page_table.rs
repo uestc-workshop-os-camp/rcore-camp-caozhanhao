@@ -206,8 +206,8 @@ pub unsafe fn copy_to_app<T>(token: usize, item: &T, dest: *mut T)
     copy_to_buffers(raw, buffers);
 }
 
-// TODO: FAILED, WHY?
-// unsafe fn copy_to_app<T>(item: &T, dest: *mut T)
+// OK, but requires a feature which is incomplete
+// pub unsafe fn copy_to_app<T>(token: usize, item: &T, dest: *mut T)
 // where
 //     [(); size_of::<T>()]:,
 // {
@@ -216,7 +216,7 @@ pub unsafe fn copy_to_app<T>(token: usize, item: &T, dest: *mut T)
 //     // Comment the next line will lead to infinite loop, WHY?
 //     trace!("{:?}", raw);
 //
-//     let buffers = translated_byte_buffer(current_user_token(),
+//     let buffers = translated_byte_buffer(token,
 //                                          dest as *const u8, size_of::<T>());
 //     copy_to_buffers(&raw, buffers);
 // }

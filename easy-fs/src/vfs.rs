@@ -168,7 +168,9 @@ impl Inode {
     /// Create inode linked with a given inode name
     // pub fn create_link(&self, name: &str, from: &str) -> Option<Arc<Inode>>
     // {
-    //     let inode_id = self.find(from).map(|inode|{inode.inode_id});
+    //     let inode_id = self.read_disk_inode(|disk_inode| {
+    //         self.find_inode_id(from, disk_inode)
+    //     });
     //     if inode_id.is_none() {return None;}
     //     self.create_child(name, inode_id)
     // }
@@ -182,7 +184,7 @@ impl Inode {
     /// Destroy linked inode
     pub fn destroy_link(&self, name: &str) -> isize
     {
-        let mut inode_opt = self.find(name);
+        let inode_opt = self.find(name);
         if inode_opt.is_none() {return -1;}
         let inode = inode_opt.unwrap();
 

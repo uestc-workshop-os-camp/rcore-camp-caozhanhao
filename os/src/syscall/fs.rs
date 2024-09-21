@@ -94,7 +94,7 @@ pub fn sys_fstat(_fd: usize, _st: *mut Stat) -> isize {
     let stat;
     if let Some(file) = &inner.fd_table[_fd]
     { stat = file.stat(); } else { return -1; }
-    drop(inner); // current_user_token() will call current_task(), so drop(inner)
+    drop(inner); // current_user_token() will call get_user_token(), so drop(inner)
     unsafe { copy_to_app(current_user_token(), &stat, _st); }
     0
 }

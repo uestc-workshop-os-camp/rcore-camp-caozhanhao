@@ -5,7 +5,7 @@ use super::{kstack_alloc, KernelStack, ProcessControlBlock, TaskContext};
 use crate::trap::TrapContext;
 use crate::{mm::PhysPageNum, sync::UPSafeCell};
 use alloc::sync::{Arc, Weak};
-use core::cell::RefMut;
+use core::cell::{Ref, RefMut};
 
 /// Task control block structure
 pub struct TaskControlBlock {
@@ -22,6 +22,10 @@ impl TaskControlBlock {
     pub fn inner_exclusive_access(&self) -> RefMut<'_, TaskControlBlockInner> {
         self.inner.exclusive_access()
     }
+    /// Get the immutable reference of the inner TCB
+    pub fn inner_shared_access(&self) -> Ref<'_, TaskControlBlockInner> {
+        self.inner.shared_access()
+    }
     /// Get the address of app's page table
     pub fn get_user_token(&self) -> usize {
         let process = self.process.upgrade().unwrap();
@@ -31,6 +35,7 @@ impl TaskControlBlock {
 }
 
 pub struct TaskControlBlockInner {
+    /// Resource
     pub res: Option<TaskUserRes>,
     /// The physical page number of the frame where the trap context is placed
     pub trap_cx_ppn: PhysPageNum,
@@ -47,6 +52,8 @@ impl TaskControlBlockInner {
     pub fn get_trap_cx(&self) -> &'static mut TrapContext {
         self.trap_cx_ppn.get_mut()
     }
+
+    pub fn get_id(&self) -> usize {self.res.as_ref().unwrap().tid}
 
     #[allow(unused)]
     fn get_status(&self) -> TaskStatus {

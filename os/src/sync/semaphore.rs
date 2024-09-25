@@ -11,6 +11,7 @@ pub struct Semaphore {
 }
 
 pub struct SemaphoreInner {
+    pub res_count: usize,
     pub count: isize,
     pub wait_queue: VecDeque<Arc<TaskControlBlock>>,
 }
@@ -22,6 +23,7 @@ impl Semaphore {
         Self {
             inner: unsafe {
                 UPSafeCell::new(SemaphoreInner {
+                    res_count,
                     count: res_count as isize,
                     wait_queue: VecDeque::new(),
                 })

@@ -4,6 +4,8 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use bitflags::*;
+use core::mem::size_of;
+use core::slice::from_raw_parts;
 
 bitflags! {
     /// page table entry flags
@@ -177,6 +179,29 @@ pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&
         start = end_va.into();
     }
     v
+}
+
+/// Copy from src to dest
+pub fn copy_to_buffers(src: &[u8], dest: Vec<&mut [u8]>) {
+    let mut beg = 0_usize;
+    for buf in dest {
+        if buf.len() < src.len() - beg
+        {
+            buf.copy_from_slice(&src[beg..beg + buf.len()]);
+            beg += buf.len();
+        } else {
+            buf[..src.len() - beg].copy_from_slice(&src[beg..]);
+            break;
+        }
+    }
+}
+
+/// Copy to the application address space
+pub unsafe fn copy_to_app<T>(token: usize, item: &T, dest: *mut T)
+{
+    let raw = from_raw_parts(item as *const _ as *const u8, size_of::<T>());
+    let buffers = translated_byte_buffer(token, dest as *const u8, size_of::<T>());
+    copy_to_buffers(raw, buffers);
 }
 
 /// Create String in kernel address space from u8 Array(end with 0) in other address space
